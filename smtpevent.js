@@ -21,106 +21,104 @@
  */
 
 var net = require('net'),
-    sys = require('sys'),
     util = require('util');
     
-var SMTPServer = function(hostname) {
+function SMTPServer(hostname) {
     net.Server.call(this);
     var that = this;
     util.log('SMTP server started on "'+ hostname + '"');
 
     this.on('connection', function (socket) {
-        return new SMTPConnection(hostname, that, socket);
+        new SMTPConnection(hostname, that, socket);
     });
     
     this.version = '0.0.2';
     
 };
-var SMTPConnection = function (hostname, server, socket) {
+util.inherits(SMTPServer, net.Server);
+
+var SMTPProtocol = {
+  verbs: {
+    HELO: 'hostname',
+    NOOP: null,
+    QUIT: undefined,
+    MAIL: 'FROM:<address>',
+    RCPT: 'TO: <address>',
+    RSET: null,
+    DATA: null
+  },
+  EOL: '\r\n'
+};
+
+/**
+* Strip extraneous whitespace from the ends of a string
+* @param {String} value
+* @return {String} value stripped of all whitespace
+*/
+function strip(value) {
+  return value.replace(/^\s+/, '').replace(/\s+$/, '');
+};
+
+/**
+ * Extract the address ensuring that any <> are correctly removed
+ * @param {String} keyword
+ * @param {String} argument
+ * @return {String} The cleaned address
+ */
+function get_address(keyword, argument) {
+    var address = null, keylen = keyword.length;
+        
+    if (argument && argument.substr(0, keylen).toUpperCase() === keyword) {
+        address = strip(argument.substr(keylen));
+        if (address.substr(0, 1) === '<' && address.substr(-1, 1) === '>' && address !== '<>') {
+            // Addresses can be in the form <person@dom.com> but watch out
+            // for null address, e.g. <>
+            address = address.substr(1, (address.length - 2));
+        }
+    }
+
+    return address;
+}
+    
+function SMTPConnection(hostname, server, socket) {
     util.log('New SMTP connection from: ' + socket.remoteAddress);
 
     // Private variables to this instance
     var self = this,
-        EOL = '\r\n',
-        COMMAND = 0,
-        DATA = 1,
-        NEWLINE = '\n',
         hostname = hostname || 'localhost',
-        state = COMMAND,
         greeting = 0,
         mailfrom = null,
         rcpttos = [];
         
-    // Private functions:
-    
-    /**
-     * Strip extraneous whitespace from the ends of a string
-     * @param {String} value
-     * @return {String} value stripped of all whitespace
-     */
-    var strip = function (value) {
-        return value.replace(/^\s+/, '').replace(/\s+$/, '');
-    }
-    
-    /**
-     * Extract the address ensuring that any <> are correctly removed
-     * @param {String} keyword
-     * @param {String} argument
-     * @return {String} The cleaned address
-     */
-    var get_address = function (keyword, argument) {
-        var address = null,
-            keylen = keyword.length;
-            
-        if (!argument) {
-            return address;
-        }
-        
-        if (argument.substr(0, keylen).toUpperCase() === keyword) {
-            address = strip(argument.substr(keylen));
-            if (address.substr(0, 1) === '<' && address.substr(-1, 1) === '>' && address !== '<>') {
-                // Addresses can be in the form <person@dom.com> but watch out
-                // for null address, e.g. <>
-                address = address.substr(1, (address.length - 2));
-            }
-        }
-        return address
-    }
-    
     /**
      * Emit a response to the client
+     * @param {Number} code
      * @param {String} message
      */
-    var send_response = function (message) {
-        socket.write(message + EOL);
-    }
+    var respond = function (code, message) { socket.write("" + code + " " + message + SMTPProtocol.EOL); }
+    // some sugar for common responses
+    respond.Ok = function () { respond(250, "Ok"); }
+    respond.Syntax = function (verb) { respond(501, "Syntax: " + verb + (SMTPProtocol.verbs[verb] ? " " + SMTPProtocol.verbs[verb] : "")); };
     
     /**
-     * Functions to handle incoming SMTP commands
+     * Functions to handle incoming SMTP verbs
      */
     var SMTP = {
         HELO: function (argument) {
-            if (!argument) {
-                send_response('501 Syntax: HELO hostname')
-                return;
-            }
             if (greeting) {
-                send_response('503 Duplicate HELO/EHLO');
+                respond(503, 'Duplicate HELO/EHLO');
             } else {
                 greeting = argument;
-                send_response('250 ' + hostname + ' Hello ' + socket.remoteAddress);
+                respond(250, hostname + ' Hello ' + socket.remoteAddress);
             }
+            socket.once('data', onVerb);
         },
-        NOOP: function (argument) {
-            if (argument) {
-                send_response('501 Syntax: NOOP');
-            } else {
-                send_response('250 Ok');
-            }
+        NOOP: function () {
+            respond.Ok();
+            socket.once('data', onVerb);
         },
-        QUIT: function (argument) {
-            // Ignore any argument
-            send_response('221 ' + hostname + ' closing connection');
+        QUIT: function () {
+            respond(221, hostname + ' closing connection');
             socket.end();
         },
         MAIL: function (argument) {
@@ -128,134 +126,130 @@ var SMTPConnection = function (hostname, server, socket) {
             util.log('===> MAIL ' + argument);
             
             if (!address) {
-                send_response('501 Syntax: MAIL FROM:<address>');
+                respond.Syntax('MAIL');
                 return;
             }
             if (mailfrom) {
-                send_response('503 Error: nested MAIL command');
+                respond(503, 'Error: nested MAIL command');
                 return;
             }
             mailfrom = address;
             util.log('sender: ' + mailfrom);
 
-            send_response('250 Ok');
+            respond.Ok();
+            socket.once('data', onVerb);
         },
         RCPT: function (argument) {
             util.log('===> RCPT ' + argument);
             if (!mailfrom) {
-                send_response('503 Error: need MAIL command');
+                respond(503, 'Error: need MAIL command');
                 return;
             }
             address = get_address('TO:', argument);
             if (!address) {
-                send_response('501 Syntax: RCPT TO: <address>');
+                respond.Syntax('RCPT');
                 return;
             }
             rcpttos.push(address);
             util.log('recips: ' + rcpttos.join(', '));
-            send_response('250 Ok');
+            respond.Ok();
+            socket.once('data', onVerb);
         },
-        RSET: function (argument) {
-            if (argument) {
-                send_response('501 Syntax: RSET');
-                return;
-            }
+        RSET: function () {
             // Reset the sender, recipients, and data, but not the greeting
             mailfrom = null;
             rcpttos = [];
-            state = COMMAND;
-            send_response('250 Ok');
+            respond.Ok();
+            socket.once('data', onVerb);
         },
-        DATA: function (argument) {
+        DATA: function () {
             if (!rcpttos.length) {
-                send_response('503 Error: need RCPT command');
+                respond(503, 'Error: need RCPT command');
                 return;
             }
-            if (argument) {
-                send_response('501 Syntax: DATA');
-                return;
-            }
-            
-            state = DATA;
-            send_response('354 End data with <CR><LF>.<CR><LF>');
+            respond(354, 'End data with <CR><LF>.<CR><LF>');
+            socket.once('data', onData);
         }
     }
         
+    /**
+     * Handle the situation where the client is issuing SMTP commands
+     */
+    var onVerb = function (buffer) {
+        var line = buffer.toString();
+
+        if (!line) {
+            respond(500, 'Error: bad syntax');
+            return;
+        }
+        
+        // TODO: capture via regex
+        var command, argument;
+        var first_space_position = line.indexOf(' ');
+        if (first_space_position < 0) {
+            command = strip(line.toUpperCase());
+            argument = null;
+        } else {
+            command = line.substr(0, first_space_position).toUpperCase();
+            argument = strip(line.substr(first_space_position));
+        }
+
+        if (!(command in SMTPProtocol.verbs)) {
+            socket.once('data', onVerb); //  state = COMMAND;
+            respond(502, 'Error: command "' + command + '" not implemented');
+            return;
+        } else {
+          // validate given argument vs expected
+          expected = SMTPProtocol.verbs[command];
+          if (typeof(expected) != "undefined" && !!expected != !!argument) {
+            socket.once('data', onVerb); //  state = COMMAND;
+            respond.Syntax(command);
+          } else {
+            SMTP[command](argument);
+          }
+        }
+    };
+
+   /**
+    * Handle the case where the client is transmitting data (i.e. not a command)
+    */
+    var onData = function (buffer) {
+      var line = buffer.toString();
+
+      var current_data = [], NEWLINE = '\n';
+
+      // Ensure that the terminator which appears in the line is removed
+      // from the final message:
+      line = line.replace(/\r\n\.\r\n$/, '');
+      
+      // Remove extraneous carriage returns and de-transparency according
+      // to RFC 821, Section 4.5.2.
+      var lines = line.split('\r\n');
+      for (var i=0, text; i<lines.length; i++) {
+          text = lines[i];
+          if (text && text.substr(0, 1) === '.') {
+              current_data.push(text.substr(1));
+          } else {
+              current_data.push(text);
+          }
+      }
+      
+      server.emit('incoming-mail',
+                  socket.remoteAddress, mailfrom, rcpttos,
+                  current_data.join(NEWLINE)
+                  );
+      
+      rcpttos = [];
+      mailfrom = null;
+      respond.Ok();
+      socket.once('data', onVerb); //  state = COMMAND;
+    }
+
     // Event listeners:
     socket.on('connect', function () {
         util.log('Socket connected from: ' + socket.remoteAddress + '. Sending welcome message.');
-        send_response('220 ' + hostname +' node.js smtpevent server ' + server.version);
-    });
-    
-    socket.on('data', function (buffer) {
-        var line = buffer.toString(),
-            method = null,
-            first_space_position,
-            command,
-            argument,
-            current_data = [],
-            lines;
-        
-        if (state === COMMAND) {
-            // Handle the situation where the client is issuing SMTP commands:
-            if (!line) {
-                send_response('500 Error: bad syntax');
-                return;
-            }
-            
-            first_space_position = line.indexOf(' ');
-            if (first_space_position < 0) {
-                command = strip(line.toUpperCase());
-                argument = null;
-            } else {
-                command = line.substr(0, first_space_position).toUpperCase();
-                argument = strip(line.substr(first_space_position));
-                
-            }
-
-            if (!(command in SMTP)) {
-                send_response('502 Error: command "' + command + '" not implemented');
-                return;
-                
-            }
-            SMTP[command](argument);
-            return;
-
-        }
-        else {
-            // Handle the case where the client is transmitting data (i.e. not a
-            // command)
-            if (state !== DATA) {
-                send_response('451 Internal confusion');
-                return;
-            }
-            
-            // Ensure that the terminator which appears in the line is removed
-            // from the final message:
-            line = line.replace(/\r\n\.\r\n$/, '');
-            
-            // Remove extraneous carriage returns and de-transparency according
-            // to RFC 821, Section 4.5.2.
-            lines = line.split('\r\n');
-            for (var i=0, text; i<lines.length; i++) {
-                text = lines[i];
-                if (text && text.substr(0, 1) === '.') {
-                    current_data.push(text.substr(1));
-                } else {
-                    current_data.push(text);
-                }
-            }
-            
-            server.emit('incoming-mail',
-                        socket.remoteAddress, mailfrom, rcpttos,
-                        current_data.join(NEWLINE)
-                        );
-            
-            rcpttos = [];
-            mailfrom = null;
-            state = COMMAND;
-            send_response('250 Ok');
-        }
+        respond(220, hostname +' node.js smtpevent server ' + server.version);
+        socket.once('data', onVerb);
     });
     
     socket.on('close', function () {
@@ -263,8 +257,6 @@ var SMTPConnection = function (hostname, server, socket) {
         delete self;
     });
 }
-    
-sys.inherits(SMTPServer, net.Server);
 
 
 // Export public API:
