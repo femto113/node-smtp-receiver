@@ -33,3 +33,5 @@ thread being created and then finishing up. To run:
 	$ python concurrent.py
 
 For unit tests, see the _"unit tests"_ section.
+
+Kitten photo courtesy of http://www.flickr.com/people/crumley/
