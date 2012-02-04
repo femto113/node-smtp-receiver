@@ -11,12 +11,13 @@ class SequentialTests(unittest.TestCase):
         'bob@example.com', 'sheila@example.com', 'kurt@example.com',
         'wendy@example.com', 'tim@example.com'
         ]
-    
+
     def testFiveSequentialMessages(self):
         """5 sequential messages can be sent in the same connection."""
         
         server = SMTP('localhost', 1025)
-        
+        # server.set_debuglevel(True) # turns on client side debug messages
+
         for from_addr, to_addr in zip(self.addrs, reversed(self.addrs)):
         
             response = server.sendmail(
