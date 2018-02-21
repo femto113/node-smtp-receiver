@@ -3,3 +3,4 @@
 .settings/
 *.pyc
 .DS_Store
+.*sw?
