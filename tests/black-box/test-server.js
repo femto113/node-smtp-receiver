@@ -8,6 +8,7 @@ var smtpevent = require('../../smtpevent.js'),
 server = new smtpevent.SMTPServer('test');
 
 var mailboxes = {
+  'akira@example.jp':   [],
   'me@example.com':     [],
   'you@example.com':    [],
   'bob@example.com':    [],
