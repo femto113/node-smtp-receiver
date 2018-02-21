@@ -1,3 +1,7 @@
+This is a substantially rewritten fork of Euan Goddard's smtpevent.  Relatively little
+of the original code remains untouched, but the spirit of the design and the
+overall structure of the project and many of the test cases all originated there.
+
 Why another SMTP server for node?
 =================================
 

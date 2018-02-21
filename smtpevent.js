@@ -20,7 +20,9 @@
  * @version 0.0.2
  */
 
-var net = require('net'), events = require('events'), util = require('util');
+var net = require('net'),
+    events = require('events'),
+    util = require('util');
     
 function SMTPServer(hostname, opts) {
     net.Server.call(this);
@@ -51,16 +53,16 @@ function SMTPServer(hostname, opts) {
       this.emit('incoming-mail', remoteAddress, mailfrom, rcpttos, data);
     }.bind(this);
 
-    // TODO don't we want other hooks? like validating recipients?
-   
     this.on('connection', (function (socket) {
         this.log('New SMTP connection from: ' + socket.remoteAddress);
         new SMTPConnection(this, socket);
     }).bind(this));
 
-    this.log('SMTP server started on "'+ this.hostname + '"');
+    this.once("listening", function () {
+      this.log('SMTP server listening at ' + this.hostname + ':' + this.address().port);
+    });
 };
-require('util').inherits(SMTPServer, net.Server);
+util.inherits(SMTPServer, net.Server);
 
 var SMTPProtocol = {
   syntax: {
@@ -80,7 +82,6 @@ var SMTPProtocol = {
   },
   EOL: '\r\n'
 };
-
     
 function SMTPConnection(server, socket) {
 
@@ -98,17 +99,15 @@ function SMTPConnection(server, socket) {
     this.onVerb = SMTPConnection.prototype.onVerb.bind(this);
     this.onData = SMTPConnection.prototype.onData.bind(this);
     
-    // socket event listeners
-    this.socket.on('connect', function () {
-        this.server.register(this);
-        this.socket.on('data', this.onVerb); // start listening for verbs
-        return this.respondWelcome();
-    }.bind(this));
+    this.server.register(this);
     
+    this.socket.on('data', this.onVerb);
     this.socket.on('close', function () {
         this.server.unregister(this);
         delete this;
     }.bind(this));
+
+    this.respondWelcome();
 }
 
 util.inherits(SMTPConnection, events.EventEmitter);
@@ -159,8 +158,17 @@ SMTPConnection.prototype.handlers = {
         if (this.mailfrom == null) return this.respond(503, 'Error: need MAIL command');
         var address = this.parse_email_address(argument);
         if (!address) return this.respondSyntax('RCPT');
-        this.rcpttos.push(address);
-        return this.respondOk();
+        var next = function (error, data) {
+          if (error) return this.respond(553, error);
+          this.rcpttos.push(data);
+          return this.respondOk();
+        }.bind(this);
+        if (events.EventEmitter.listenerCount(this.server, 'recipient')) {
+          // TODO: add a timeout in case validation takes to long?
+          this.server.emit("recipient", address, next);
+        } else {
+          next(null, address);
+        }
     },
     DATA: function () {
         if (!this.rcpttos.length) return this.respond(503, 'Error: need RCPT command');
@@ -229,10 +237,3 @@ SMTPConnection.prototype.listenForData = function () {
 
 // Export public API:
 exports.SMTPServer = SMTPServer;
-
-//var server = new SMTPServer('localhost');
-//server.listen(1025, "127.0.0.1");
-//server.on('incoming-mail', function () {
-//   console.log(arguments); 
-//});
-

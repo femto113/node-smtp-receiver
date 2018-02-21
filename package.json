@@ -1,14 +1,14 @@
 {
-  "author": "Euan Goddard <euan.goddard@gmail.com>",
-  "name": "smtpevent",
-  "description": "Evented SMTP server",
-  "version": "0.0.2",
+  "author": "Ken Woodruff <ken.woodruff@gmail.com>",
+  "contributors": [
+    "Euan Goddard <euan.goddard@gmail.com>"
+  ],
+  "name": "smtpeventier",
+  "description": "Re-invented evented SMTP server",
+  "version": "0.1.0",
   "repository": {
     "type": "git",
-    "url": "git://github.com/euangoddard/node-smtpevent.git"
-  },
-  "engines": {
-    "node": "~v0.4.7"
+    "url": "git://github.com/femto113/node-smtpevent.git"
   },
   "dependencies": {},
   "devDependencies": {}

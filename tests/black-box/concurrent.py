@@ -8,19 +8,26 @@ from random import choice
 MESSAGE_PATH = path.abspath(path.join(path.dirname(__file__), 'message.txt'))
 
 class SendMessageThread(Thread):
+
+    addrs = [
+        'bob@example.com', 'sheila@example.com', 'kurt@example.com',
+        'wendy@example.com', 'tim@example.com'
+        ]
     
     def __init__(self, client_number, message, *args, **kwargs):
         super(SendMessageThread, self).__init__(*args, **kwargs)
         self._client_number = client_number
         self._message = message
         self._from = 'client%d@example.com' % self._client_number
+        self._to = self.addrs[self._client_number % len(self.addrs)]
     
     def run(self):
         print 'Starting client: %d' % self._client_number
         # server = SMTP('localhost', 1025)
         server = SMTP('127.0.0.1', 1025)
-        response = server.sendmail(self._from, 'you@example.com', self._message)
+        response = server.sendmail(self._from, self._to, self._message)
         server.quit()
+        server.close()
         
         assert response == {}
         
