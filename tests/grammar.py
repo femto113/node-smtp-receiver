@@ -14,6 +14,7 @@ class GoodGrammarTests(unittest.TestCase):
 
     def setUp(self):
         self.smtp = SMTP('localhost', 1025)
+        self.smtp.set_debuglevel(True)
 
     def tearDown(self):
         # self.smtp.quit()
@@ -75,15 +76,16 @@ class BadGrammarTests(unittest.TestCase):
     
     def setUp(self):
         self.smtp = SMTP('localhost', 1025)
+        self.smtp.set_debuglevel(True)
 
     def tearDown(self):
         self.smtp.quit()
         self.smtp.close()
         self.smtp = None
   
-    def testUnimplementedEhlo(self):
-        """Unknown commands are ignored and the self.smtp informed."""
-        self.assertEqual(self.smtp.ehlo(), (502, 'Error: command "EHLO" not implemented'))
+    # def testUnimplementedEhlo(self):
+    #     """Unknown commands are ignored and the self.smtp informed."""
+    #     self.assertEqual(self.smtp.ehlo(), (502, 'Error: command "EHLO" not implemented'))
         
     def testIllegalHelo(self):
         """HELO takes a single argument."""

@@ -22,7 +22,8 @@
 
 var net = require('net'),
     events = require('events'),
-    util = require('util');
+    util = require('util'),
+    tls = require('tls');
     
 function SMTPServer(hostname, opts) {
     net.Server.call(this);
@@ -67,6 +68,7 @@ util.inherits(SMTPServer, net.Server);
 var SMTPProtocol = {
   syntax: {
     HELO: 'hostname',
+    EHLO: 'hostname',
     NOOP: null,
     QUIT: undefined,
     MAIL: 'FROM:<address>',
@@ -76,7 +78,7 @@ var SMTPProtocol = {
   },
   regex: { 
     // regex for matching any incoming verb
-    verb:  /^(?:\s*)([A-Za-z]{4}) ?(.*)(?:\s|\r|\n)*$/,
+    verb:  /^(?:\s*)([A-Za-z]{4,8}) ?(.*)(?:\s|\r|\n)*$/,
     // regex for matching an incoming email address (as provided in the MAIL FROM: or RCPT TO: commands)
     email: /^\s*(?:FROM:|TO:)\s*<\s*?([^>]*)\s*>?\s*$/i,
   },
@@ -138,15 +140,74 @@ SMTPConnection.prototype.respond = function (code, message) { this.socket.write(
 SMTPConnection.prototype.respondOk = function () { this.respond(250, "Ok"); }
 SMTPConnection.prototype.respondSyntax = function (verb) { this.respond(501, "Syntax: " + verb + (SMTPProtocol.syntax[verb] ? " " + SMTPProtocol.syntax[verb] : "")); };
 SMTPConnection.prototype.respondWelcome = function () { this.respond(220, [this.server.hostname, this.server.name, this.server.version].join(' ')); };
+// for ESMTP EHLO response
+SMTPConnection.prototype.writeExtension = function (code, message) { this.socket.write("" + code + "-" + message + SMTPProtocol.EOL); }
+
+
+
+
+function _upgrade(socket, callback) {
+        let socketOptions = {
+            isServer: true,
+            server: this.server,
+            SNICallback: this.options.SNICallback
+        };
+
+        let returned = false;
+        let onError = err => {
+            if (returned) {
+                return;
+            }
+            returned = true;
+            callback(err || new Error('Socket closed unexpectedly'));
+        };
+
+        // remove all listeners from the original socket besides the error handler
+        socket.once('error', onError);
+
+        // upgrade connection
+        let tlsSocket = new tls.TLSSocket(socket, socketOptions);
+
+        tlsSocket.once('close', onError);
+        tlsSocket.once('error', onError);
+        tlsSocket.once('_tlsError', onError);
+        tlsSocket.once('clientError', onError);
+        tlsSocket.once('tlsClientError', onError);
+
+        tlsSocket.on('secure', () => {
+            socket.removeListener('error', onError);
+            tlsSocket.removeListener('close', onError);
+            tlsSocket.removeListener('error', onError);
+            tlsSocket.removeListener('_tlsError', onError);
+            tlsSocket.removeListener('clientError', onError);
+            tlsSocket.removeListener('tlsClientError', onError);
+            if (returned) {
+                try {
+                    tlsSocket.end();
+                } catch (E) {
+                    //
+                }
+                return;
+            }
+            returned = true;
+            return callback(null, tlsSocket);
+        });
+}
 
 /**
  * Functions to handle incoming SMTP verbs
  */
 SMTPConnection.prototype.handlers = {
     HELO: function (argument) {
-      if (this.greeting) return this.respond(503, 'Duplicate HELO/EHLO');
+        if (this.greeting) return this.respond(503, 'Duplicate HELO/EHLO');
         this.greeting = argument;
         return this.respond(250, this.server.hostname + ' Hello ' + this.socket.remoteAddress);
+    },
+    EHLO: function (argument) {
+        if (this.greeting) return this.respond(503, 'Duplicate HELO/EHLO');
+        this.greeting = argument;
+        this.writeExtension(250, this.server.hostname + ' Hello ' + this.socket.remoteAddress);
+        return this.respond(250, "STARTTLS");
     },
     MAIL: function (argument) {
         if (this.mailfrom) return this.respond(503, 'Error: nested MAIL command');
@@ -169,6 +230,10 @@ SMTPConnection.prototype.handlers = {
         } else {
           next(null, address);
         }
+    },
+    STARTTLS: function () {
+      this.respond(220, 'Ready to start TLS');
+      _upgrade(this.socket, function (err, data) { console[err ? 'error' : 'log'](err || data); });
     },
     DATA: function () {
         if (!this.rcpttos.length) return this.respond(503, 'Error: need RCPT command');
