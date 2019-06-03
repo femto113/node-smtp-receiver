@@ -3,7 +3,7 @@
  * @author Euan Goddard
  */
 
-var smtpevent = require('../../smtpevent.js'),
+var smtpevent = require('../smtpevent.js'),
     
 server = new smtpevent.SMTPServer('test');
 

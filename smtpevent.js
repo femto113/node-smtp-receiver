@@ -193,7 +193,10 @@ SMTPConnection.prototype.handlers = {
  */
 SMTPConnection.prototype.onVerb = function (buffer) {
     var matches = buffer.toString().match(SMTPProtocol.regex.verb);
-    if (!matches) return this.respond(500, 'Error: bad syntax');
+    if (!matches) {
+      // TODO: log the mismatching input
+      return this.respond(500, 'Error: bad syntax');
+    }
 
     var command = matches[1].toUpperCase(), argument = matches[2];
 

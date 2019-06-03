@@ -4,3 +4,5 @@
 *.pyc
 .DS_Store
 .*sw?
+node_modules/
+package-lock.json
