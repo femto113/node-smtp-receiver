@@ -141,10 +141,13 @@ SMTPConnection.prototype.starttls = function () {
     let socketOptions = {
         isServer: true,
         server: this.server,
-        SNICallback: console.log.bind(console, 'SNICallback')
     };
 
     socketOptions = tlsOptions(socketOptions);
+
+    secureContext = tls.createSecureContext(socketOptions);
+
+    socketOptions.SNICallback = function (servername, callback) { callback(null, secureContext); };
 
     let returned = false;
     let onError = err => {
