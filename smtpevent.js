@@ -41,8 +41,8 @@ function SMTPServer(hostname, opts) {
     }.bind(this);
 
     this.unregister = function(connection) {
+        this.log('Connection', connection.id, 'unregistering', connection.socket.remoteAddress);
         --this.stats.connections.current;
-        this.log('Socket closing', connection.socket.remoteAddress);
     }.bind(this);
 
     this.log_stats = function() { this.log(JSON.stringify(this.stats)); }.bind(this);
@@ -87,11 +87,13 @@ var SMTPProtocol = {
     
 function SMTPConnection(server, socket) {
 
+    this.id = Math.random() * 1e10 >>> 0;
+
     events.EventEmitter.call(this);
 
-    this.server = server;
-    this.socket = socket;
+    this.socket = null; // set below
     this.greeting = null;
+    this.server = server;
     this.reset(); // initialize envelope and message data
 
     // add listeners for all of our supported verbs
@@ -102,17 +104,87 @@ function SMTPConnection(server, socket) {
     this.onData = SMTPConnection.prototype.onData.bind(this);
     
     this.server.register(this);
-    
-    this.socket.on('data', this.onVerb);
-    this.socket.on('close', function () {
-        this.server.unregister(this);
-        delete this;
-    }.bind(this));
+
+    this.setSocket = function (s) {
+      if (this.sockets === s) return;
+      // remove listeners from old socket (if there was one)
+      if (this.socket) {
+        this.socket.removeListener('data', this.onVerb);
+        this.socket.removeAllListeners('close');
+      }
+      this.greeting = null; // allow another HELO/EHLO
+      this.socket = s;
+      // add listeners to new socket (if there is one)
+      if (this.socket) {
+        this.socket.on('data', this.onVerb);
+        this.socket.on('close', function () {
+            this.server.unregister(this);
+            delete this;
+        }.bind(this));
+      }
+    }.bind(this);
+
+    this.setSocket(socket);
 
     this.respondWelcome();
 }
 
 util.inherits(SMTPConnection, events.EventEmitter);
+
+const tlsOptions = require('./tls-options');
+
+SMTPConnection.prototype.starttls = function () {
+    if (this.socket instanceof tls.TLSSocket) {
+      return this.server.log("starttls: socket is already TLSSocket")
+    }
+
+    let socketOptions = {
+        isServer: true,
+        server: this.server,
+        SNICallback: console.log.bind(console, 'SNICallback')
+    };
+
+    socketOptions = tlsOptions(socketOptions);
+
+    let returned = false;
+    let onError = err => {
+        console.log("starttls: onError", err)
+        if (returned) return;
+        returned = true;
+        // TODO: raise an error on the server?
+    };
+
+    this.socket.once('error', onError);
+      
+    // upgrade connection
+    this.server.log("starttls: creating TLSSocket...")
+    let tlsSocket = new tls.TLSSocket(this.socket, socketOptions);
+
+    const unexpected_events = ['close', 'error', '_tlsError', 'clientError', 'tlsClientError']
+
+    unexpected_events.forEach((e) => tlsSocket.once(e, onError));
+
+    tlsSocket.on('secure', function () {
+        this.socket.removeListener('error', onError);
+        unexpected_events.forEach((e) => tlsSocket.removeListener(e, onError));
+        if (returned) {
+            try {
+                tlsSocket.end();
+            } catch (E) {
+                //
+            }
+            return;
+        }
+        returned = true;
+
+        this.server.log("starttls: tlsSocket.on('secure') replacing connection socket...")
+        this.setSocket(tlsSocket);
+        // this.connections.add(connection);
+        // connection.on('error', err => this._onError(err));
+        // connection.on('connect', data => this._onClientConnect(data));
+        // connection.init();
+    }.bind(this));
+};
 
 SMTPConnection.prototype.reset = function () {
     this.mailfrom = null;
@@ -143,56 +215,6 @@ SMTPConnection.prototype.respondWelcome = function () { this.respond(220, [this.
 // for ESMTP EHLO response
 SMTPConnection.prototype.writeExtension = function (code, message) { this.socket.write("" + code + "-" + message + SMTPProtocol.EOL); }
 
-
-
-
-function _upgrade(socket, callback) {
-        let socketOptions = {
-            isServer: true,
-            server: this.server,
-            SNICallback: this.options.SNICallback
-        };
-
-        let returned = false;
-        let onError = err => {
-            if (returned) {
-                return;
-            }
-            returned = true;
-            callback(err || new Error('Socket closed unexpectedly'));
-        };
-
-        // remove all listeners from the original socket besides the error handler
-        socket.once('error', onError);
-
-        // upgrade connection
-        let tlsSocket = new tls.TLSSocket(socket, socketOptions);
-
-        tlsSocket.once('close', onError);
-        tlsSocket.once('error', onError);
-        tlsSocket.once('_tlsError', onError);
-        tlsSocket.once('clientError', onError);
-        tlsSocket.once('tlsClientError', onError);
-
-        tlsSocket.on('secure', () => {
-            socket.removeListener('error', onError);
-            tlsSocket.removeListener('close', onError);
-            tlsSocket.removeListener('error', onError);
-            tlsSocket.removeListener('_tlsError', onError);
-            tlsSocket.removeListener('clientError', onError);
-            tlsSocket.removeListener('tlsClientError', onError);
-            if (returned) {
-                try {
-                    tlsSocket.end();
-                } catch (E) {
-                    //
-                }
-                return;
-            }
-            returned = true;
-            return callback(null, tlsSocket);
-        });
-}
 
 /**
  * Functions to handle incoming SMTP verbs
@@ -233,7 +255,7 @@ SMTPConnection.prototype.handlers = {
     },
     STARTTLS: function () {
       this.respond(220, 'Ready to start TLS');
-      _upgrade(this.socket, function (err, data) { console[err ? 'error' : 'log'](err || data); });
+      return this.starttls();
     },
     DATA: function () {
         if (!this.rcpttos.length) return this.respond(503, 'Error: need RCPT command');
@@ -257,6 +279,7 @@ SMTPConnection.prototype.handlers = {
  * Handle the situation where the client is issuing SMTP commands
  */
 SMTPConnection.prototype.onVerb = function (buffer) {
+    this.server.log("connection", this.id, "onVerb", buffer.toString())
     var matches = buffer.toString().match(SMTPProtocol.regex.verb);
     if (!matches) return this.respond(500, 'Error: bad syntax');
 
@@ -276,6 +299,7 @@ SMTPConnection.prototype.onVerb = function (buffer) {
  * Handle the case where the client is transmitting data (i.e. not a command)
  */
 SMTPConnection.prototype.onData = function (buffer) {
+    this.server.log("connection", this.id, "onData", buffer.toString())
   var lines = buffer.toString().split('\r\n');
   for (var i = 0; i < lines.length; i++) {
       if (lines[i].match(/^\.$/)) { // we've reached the end of the data

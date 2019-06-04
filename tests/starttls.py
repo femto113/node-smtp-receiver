@@ -22,7 +22,9 @@ class SequentialTests(unittest.TestCase):
         print "does_esmtp = " + str(smtp.does_esmtp)
         print "esmtp_features = " + str(smtp.esmtp_features)
 
-        smtp.starttls()
+        print "calling starttls..."
+        response = smtp.starttls()
+        print "got " + str(response)
 
         response = smtp.sendmail(
             'alice@example.com',
