@@ -5,7 +5,7 @@
   ],
   "name": "smtpeventier",
   "description": "Re-invented evented SMTP server",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "repository": {
     "type": "git",
     "url": "git://github.com/femto113/node-smtpevent.git"

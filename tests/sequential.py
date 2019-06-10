@@ -12,50 +12,6 @@ class SequentialTests(unittest.TestCase):
         'wendy@example.com', 'tim@example.com'
         ]
 
-    def testFiveSequentialMessages(self):
-        """5 sequential messages can be sent in the same connection."""
-        
-        server = SMTP('localhost', 1025)
-        # server.set_debuglevel(True) # turns on client side debug messages
-
-        for from_addr, to_addr in zip(self.addrs, reversed(self.addrs)):
-        
-            response = server.sendmail(
-                from_addr, [to_addr],
-                'This is a test message\nSecond line.\nFinal line here.'
-                )
-            
-            self.assertEqual(response, {})
-        
-        server.quit()
-    
-    def testFiveSequentialConnections(self):
-        """5 sequential connections can be used to send messages."""
-        
-        for from_addr, to_addr in zip(self.addrs, reversed(self.addrs)):
-            server = SMTP('localhost', 1025)
-
-            response = server.sendmail(
-                from_addr, [to_addr],
-                'This is a test message\nSecond line.\nFinal line here.'
-                )
-            
-            self.assertEqual(response, {})
-        
-            server.quit()
-        
-    def testUnicode(self):
-        """Unicode characters are correctly received"""
-        
-        server = SMTP('localhost', 1025)
-        
-        response = server.sendmail(
-            'ryu@example.jp', 'akira@example.jp',
-            u'こんにちは彰、どのようにして、今日ですか？リュ'.encode('utf8')
-            )
-        
-        self.assertEqual(response, {})
-        
     def testWelcomeMessage(self):
         """On connecting the server sends a 220 response with a welcome message."""
         client = Telnet('localhost', 1025)
@@ -64,15 +20,16 @@ class SequentialTests(unittest.TestCase):
                          )
         client.close()
         
-    def testUnknownCommand(self):
-        """Unknown commands are ignored and the client informed."""
-        
-        client = Telnet('localhost', 1025)
-        client.read_some()
-        client.write('EHLO')
-        self.assertEqual(client.read_some(), 
-                         '502 Error: command "EHLO" not implemented\r\n')
-        client.close()
+    # TODO: test EHLO
+    #def testUnknownCommand(self):
+        #"""Unknown commands are ignored and the client informed."""
+        #
+        #client = Telnet('localhost', 1025)
+        #client.read_some()
+        #client.write('EHLO')
+        #self.assertEqual(client.read_some(), 
+                         #'502 Error: command "EHLO" not implemented\r\n')
+        #client.close()
         
     def testIllegalHelo(self):
         """HELO takes a single argument."""
@@ -80,6 +37,8 @@ class SequentialTests(unittest.TestCase):
         client = Telnet('localhost', 1025)
         client.read_some()
         client.write('HELO')
+        response = client.read_some()
+        print response
         self.assertEqual(client.read_some(), '501 Syntax: HELO hostname\r\n')
         client.close()
     
@@ -92,6 +51,17 @@ class SequentialTests(unittest.TestCase):
         self.assertEqual(client.read_some(), '250 test Hello 127.0.0.1\r\n')
         client.close()
         
+    def testLegalEhlo(self):
+        """The server responds to a valid EHLO command."""
+        
+        client = Telnet('localhost', 1025)
+        client.read_some()
+        client.write('EHLO localhost')
+        response = client.read_some();
+        print response;
+        self.assertEqual(client.read_some(), '250 test Hello 127.0.0.1\r\n')
+        client.close()
+
     def testMultipleHelo(self):
         """Only a single HELO command is allowed per connection."""
         
@@ -282,6 +252,50 @@ class SequentialTests(unittest.TestCase):
         client.write('DATA some data here')
         self.assertEqual(client.read_some(), '501 Syntax: DATA\r\n')
         client.close()
+        
+    def testFiveSequentialMessages(self):
+        """5 sequential messages can be sent in the same connection."""
+        
+        server = SMTP('localhost', 1025)
+        # server.set_debuglevel(True) # turns on client side debug messages
+
+        for from_addr, to_addr in zip(self.addrs, reversed(self.addrs)):
+        
+            response = server.sendmail(
+                from_addr, [to_addr],
+                'This is a test message\nSecond line.\nFinal line here.'
+                )
+            
+            self.assertEqual(response, {})
+        
+        server.quit()
+    
+    def testFiveSequentialConnections(self):
+        """5 sequential connections can be used to send messages."""
+        
+        for from_addr, to_addr in zip(self.addrs, reversed(self.addrs)):
+            server = SMTP('localhost', 1025)
+
+            response = server.sendmail(
+                from_addr, [to_addr],
+                'This is a test message\nSecond line.\nFinal line here.'
+                )
+            
+            self.assertEqual(response, {})
+        
+            server.quit()
+        
+    def testUnicode(self):
+        """Unicode characters are correctly received"""
+        
+        server = SMTP('localhost', 1025)
+        
+        response = server.sendmail(
+            'ryu@example.jp', 'akira@example.jp',
+            u'こんにちは彰、どのようにして、今日ですか？リュ'.encode('utf8')
+            )
+        
+        self.assertEqual(response, {})
         
 if __name__ == "__main__":
     unittest.main()
