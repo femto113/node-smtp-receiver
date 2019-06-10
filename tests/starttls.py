@@ -16,15 +16,19 @@ class SequentialTests(unittest.TestCase):
         """starttls is supported"""
         
         smtp = SMTP('localhost', 1025)
+        # smtp = SMTP('ec2-18-208-163-245.compute-1.amazonaws.com', 25)
         smtp.set_debuglevel(True) # turns on client side debug messages
 
-        smtp.ehlo()
-        print "does_esmtp = " + str(smtp.does_esmtp)
-        print "esmtp_features = " + str(smtp.esmtp_features)
+        code, text = smtp.ehlo()
+        self.assertTrue(smtp.does_esmtp, msg="after EHLO does_estmp should be truish")
+        self.assertIn('starttls', smtp.esmtp_features, msg="after EHLO 'starttls' should be in esmtp_features")
 
-        print "calling starttls..."
-        response = smtp.starttls()
-        print "got " + str(response)
+        code, text = smtp.starttls()
+        self.assertEqual(code, 220, msg="response code to starttls should be 220")
+        
+        code, text = smtp.ehlo()
+        self.assertEqual(code, 250, msg="one additional EHLO after STARTTLS should not cause an error")
+        self.assertNotIn('starttls', smtp.esmtp_features, msg="after STARTTLS + EHLO 'starttls' should no longer be in esmtp_features")
 
         response = smtp.sendmail(
             'alice@example.com',

@@ -1,5 +1,6 @@
 /*******************************************************************************
  *
+ * Copyright (c) 2019, Ken Woodruff <ken.woodruff@gmail.com>.
  * Copyright (c) 2011, Euan Goddard <euan.goddard@gmail.com>.
  * All Rights Reserved.
  *
@@ -15,23 +16,27 @@
  */
 
 
-/**
- * @author Euan Goddard
- * @version 0.0.2
- */
-
 var net = require('net'),
     events = require('events'),
     util = require('util'),
-    tls = require('tls');
+    tls = require('tls'),
+    pkg = require('./package.json');
     
-function SMTPServer(hostname, opts) {
+function SMTPMessage(remoteAddress, mailfrom, rcpttos, data) {
+    this.remoteAddress = remoteAddress;
+    this.mailfrom = mailfrom;
+    this.rcpttos = rcpttos;
+    this.data = data;
+}
+
+function SMTPServer(hostname, options) {
+
     net.Server.call(this);
 
     this.hostname = hostname || require('os').hostname();
-    this.name = opts && opts.name || 'node.js smtpevent server';
-    this.version = opts && opts.version || '0.0.2';
-    this.log = opts && opts.log || function () { util.log(Array.prototype.slice.call(arguments).join(' ')); }
+    this.name = options && options.name || 'node.js smtpevent server';
+    this.version = options && options.version || pkg.version || 'unknown';
+    this.log = options && options.log || util.log;
 
     this.stats = { messages: { total: 0 }, connections: { current: 0, max: 0, total: 0 } };
 
@@ -47,11 +52,10 @@ function SMTPServer(hostname, opts) {
 
     this.log_stats = function() { this.log(JSON.stringify(this.stats)); }.bind(this);
 
-    // connection will call this method when a complete message is received
-    // TODO should pass this as arg to connection?
+    // connection calls this method when a complete message is received
     this.incoming = function (remoteAddress, mailfrom, rcpttos, data) {
-      ++this.stats.messages.total;
-      this.emit('incoming-mail', remoteAddress, mailfrom, rcpttos, data);
+        ++this.stats.messages.total;
+        this.emit("incoming", new SMTPMessage(remoteAddress, mailfrom, rcpttos, data));
     }.bind(this);
 
     this.on('connection', (function (socket) {
@@ -59,11 +63,24 @@ function SMTPServer(hostname, opts) {
         new SMTPConnection(this, socket);
     }).bind(this));
 
-    this.once("listening", function () {
+    this.once("listening", (function () {
       this.log('SMTP server listening at ' + this.hostname + ':' + this.address().port);
-    });
-};
-util.inherits(SMTPServer, net.Server);
+    }).bind(this));
+}
+
+function createServer(hostname, options, incomingListener) {
+    // if options not given incomingListener may be in the wrong spot
+    if (typeof incomingListener === "undefined" && typeof options === "function") {
+      incomingListener = options;
+      options = undefined;
+    }
+
+    server = new SMTPServer(hostname, options);
+
+    if (incomingListener) server.on("incoming", incomingListener)
+
+    return server;
+}
 
 var SMTPProtocol = {
   syntax: {
@@ -73,6 +90,7 @@ var SMTPProtocol = {
     QUIT: undefined,
     MAIL: 'FROM:<address>',
     RCPT: 'TO: <address>',
+    VRFY: '<address>',
     RSET: null,
     DATA: null
   },
@@ -112,7 +130,9 @@ function SMTPConnection(server, socket) {
         this.socket.removeListener('data', this.onVerb);
         this.socket.removeAllListeners('close');
       }
-      this.greeting = null; // allow another HELO/EHLO
+      // reset the greeting to allow another HELO/EHLO
+      // (see https://tools.ietf.org/html/rfc3207#section-4.2)
+      this.greeting = null;
       this.socket = s;
       // add listeners to new socket (if there is one)
       if (this.socket) {
@@ -215,6 +235,9 @@ SMTPConnection.prototype.respond = function (code, message) { this.socket.write(
 SMTPConnection.prototype.respondOk = function () { this.respond(250, "Ok"); }
 SMTPConnection.prototype.respondSyntax = function (verb) { this.respond(501, "Syntax: " + verb + (SMTPProtocol.syntax[verb] ? " " + SMTPProtocol.syntax[verb] : "")); };
 SMTPConnection.prototype.respondWelcome = function () { this.respond(220, [this.server.hostname, this.server.name, this.server.version].join(' ')); };
+// hello message is a standalone because sometimes we need to write it as an extension, other times as a response
+SMTPConnection.prototype.helloMessage = function () { return this.server.hostname + ' Hello ' + this.socket.remoteAddress; }
+SMTPConnection.prototype.respondHello = function () { this.respond(250, this.helloMessage()); }
 // for ESMTP EHLO response
 SMTPConnection.prototype.writeExtension = function (code, message) { this.socket.write("" + code + "-" + message + SMTPProtocol.EOL); }
 
@@ -226,13 +249,19 @@ SMTPConnection.prototype.handlers = {
     HELO: function (argument) {
         if (this.greeting) return this.respond(503, 'Duplicate HELO/EHLO');
         this.greeting = argument;
-        return this.respond(250, this.server.hostname + ' Hello ' + this.socket.remoteAddress);
+        return this.respondHello()
     },
     EHLO: function (argument) {
         if (this.greeting) return this.respond(503, 'Duplicate HELO/EHLO');
         this.greeting = argument;
-        this.writeExtension(250, this.server.hostname + ' Hello ' + this.socket.remoteAddress);
-        return this.respond(250, "STARTTLS");
+        if (this.socket instanceof tls.TLSSocket) {
+          // if already secure do not send STARTTLS again
+          // TODO: should still write any other extensions
+          return this.respondHello()
+        } else {
+          this.writeExtension(250, this.helloMessage())
+          return this.respond(250, "STARTTLS");
+        }
     },
     MAIL: function (argument) {
         if (this.mailfrom) return this.respond(503, 'Error: nested MAIL command');
@@ -249,12 +278,32 @@ SMTPConnection.prototype.handlers = {
           this.rcpttos.push(data);
           return this.respondOk();
         }.bind(this);
+        // TODO: do this emit async
         if (events.EventEmitter.listenerCount(this.server, 'recipient')) {
           // TODO: add a timeout in case validation takes to long?
           this.server.emit("recipient", address, next);
         } else {
           next(null, address);
         }
+    },
+    VRFY: function (argument) {
+        // NOTE: there are two possible forms of argument, a plain username or a formatted email address
+        //       a the moment we're only supporting the address flavor
+        if (!argument) return this.respondSyntax('VRFY');
+        var address = this.parse_email_address(argument);
+        if (!address) return this.respond(504, 'can only verify full addreses');
+        // if we do not have a recipient listener always just respond with an "I don't know" message
+        if (!events.EventEmitter.listenerCount(this.server, 'recipient')) {
+          return this.respond(252, "address might be valid")
+        }
+        // NOTE: there are two possible forms of argument, a plain username or a formatted email address
+        var next = function (error, data) {
+          if (error) return this.respond(550, error); // TODO: maybe use 553?
+          if (data) return this.respond(250, data);
+          return this.respond(252, "address might be valid");
+        }.bind(this);
+        // TODO: do this emit async
+        this.server.emit("recipient", address, next);
     },
     STARTTLS: function () {
       this.respond(220, 'Ready to start TLS');
@@ -282,7 +331,7 @@ SMTPConnection.prototype.handlers = {
  * Handle the situation where the client is issuing SMTP commands
  */
 SMTPConnection.prototype.onVerb = function (buffer) {
-    this.server.log("connection", this.id, "onVerb", buffer.toString())
+    this.server.log("connection", this.id, "onVerb", buffer.toString().trim())
     var matches = buffer.toString().match(SMTPProtocol.regex.verb);
     if (!matches) return this.respond(500, 'Error: bad syntax');
 
@@ -302,7 +351,7 @@ SMTPConnection.prototype.onVerb = function (buffer) {
  * Handle the case where the client is transmitting data (i.e. not a command)
  */
 SMTPConnection.prototype.onData = function (buffer) {
-    this.server.log("connection", this.id, "onData", buffer.toString())
+    this.server.log("connection", this.id, "onData", buffer.toString().trim())
   var lines = buffer.toString().split('\r\n');
   for (var i = 0; i < lines.length; i++) {
       if (lines[i].match(/^\.$/)) { // we've reached the end of the data
@@ -329,3 +378,4 @@ SMTPConnection.prototype.listenForData = function () {
 
 // Export public API:
 exports.SMTPServer = SMTPServer;
+exports.createServer = createServer;
