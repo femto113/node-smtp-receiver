@@ -98,7 +98,7 @@ var SMTPProtocol = {
     // regex for matching any incoming verb
     verb:  /^(?:\s*)([A-Za-z]{4,8}) ?(.*)(?:\s|\r|\n)*$/,
     // regex for matching an incoming email address (as provided in the MAIL FROM: or RCPT TO: commands)
-    email: /^\s*(?:FROM:|TO:)\s*<\s*?([^>]*)\s*>?\s*$/i,
+    email: /^\s*(?:FROM:|TO:)?\s*<\s*?([^>]*)\s*>?\s*$/i,
   },
   EOL: '\r\n'
 };
