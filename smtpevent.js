@@ -30,7 +30,6 @@ function SMTPMessage(remoteAddress, mailfrom, rcpttos, data) {
 }
 
 function SMTPServer(hostname, options) {
-
     net.Server.call(this);
 
     this.hostname = hostname || require('os').hostname();
@@ -67,6 +66,7 @@ function SMTPServer(hostname, options) {
       this.log('SMTP server listening at ' + this.hostname + ':' + this.address().port);
     }).bind(this));
 }
+util.inherits(SMTPServer, net.Server);
 
 function createServer(hostname, options, incomingListener) {
     // if options not given incomingListener may be in the wrong spot
