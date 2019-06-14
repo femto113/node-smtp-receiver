@@ -8,6 +8,7 @@
   "description": "zero-dependency SMTP server that emits event for each recieved email message",
   "keywords": ["SMTP", "smtp", "smtp-server", "email"],
   "homepage": "https://github.com/femto113/node-smtp-receiver#readme",
+  "license": "MIT",
   "repository": "github:femto113/node-smtp-receiver",
   "dependencies": {},
   "devDependencies": {}
