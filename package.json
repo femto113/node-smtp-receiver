@@ -3,13 +3,12 @@
   "contributors": [
     "Euan Goddard <euan.goddard@gmail.com>"
   ],
-  "name": "smtpeventier",
-  "description": "Re-invented evented SMTP server",
-  "version": "0.9.0",
-  "repository": {
-    "type": "git",
-    "url": "git://github.com/femto113/node-smtpevent.git"
-  },
+  "name": "smtp-receiver",
+  "version": "1.0.0",
+  "description": "zero-dependency SMTP server that emits event for each recieved email message",
+  "keywords": ["SMTP", "smtp", "smtp-server", "email"],
+  "homepage": "https://github.com/femto113/node-smtp-receiver#readme",
+  "repository": "github:femto113/node-smtp-receiver",
   "dependencies": {},
   "devDependencies": {}
 }
