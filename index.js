@@ -1,28 +1,54 @@
-/*******************************************************************************
- *
+/*
  * Copyright (c) 2019, Ken Woodruff <ken.woodruff@gmail.com>.
  * Copyright (c) 2011, Euan Goddard <euan.goddard@gmail.com>.
- * All Rights Reserved.
- *
- * This file is part of smtpevent <https://github.com/euangoddard/node-smtpevent>,
- * which is subject to the provisions of the BSD at
- * <https://github.com/euangoddard/node-smtpevent/raw/master/LICENCE>. A copy of
- * the license should accompany this distribution. THIS SOFTWARE IS PROVIDED "AS
- * IS" AND ANY AND ALL EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED, INCLUDING,
- * BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF TITLE, MERCHANTABILITY, AGAINST
- * INFRINGEMENT, AND FITNESS FOR A PARTICULAR PURPOSE.
- *
- *******************************************************************************
+ * All Rights Reserved.  See LICENSE file for license details.
  */
-
 
 var net = require('net'),
     events = require('events'),
     util = require('util'),
     tls = require('tls'),
+    crypto = require('crypto'),
     pkg = require('./package.json');
+
+var SMTPGrammar = {
+  syntax: {
+    HELO: 'hostname',
+    EHLO: 'hostname',
+    NOOP: null,
+    QUIT: undefined,
+    MAIL: 'FROM:<address>',
+    RCPT: 'TO: <address>',
+    VRFY: '<address>',
+    RSET: null,
+    DATA: null
+  },
+  regex: { 
+    // regex for matching any incoming verb
+    verb:  /^(?:\s*)([A-Za-z]{4,8}) ?(.*)(?:\s|\r|\n)*$/,
+    // regex for matching an incoming email address (as provided in the MAIL FROM: or RCPT TO: commands)
+    email: /^\s*(?:FROM:|TO:)?\s*<\s*?([^>]*)\s*>?\s*$/i,
+    // regex for matching the end of DATA
+    end: /^\.$/
+  },
+  EOL: '\r\n'
+};
     
-function SMTPMessage(remoteAddress, mailfrom, rcpttos, data) {
+
+// TODO: pass the helo/remoteAddress/connection.id in as a received object
+// modeled after the Received header? see
+// https://www.pobox.com/helpspot/index.php?pg=kb.printer.friendly&id=22
+/*
+  Received: {
+    "from": the name the sending computer gave for itself (the name associated with that computer's IP address [its IP address])
+    "by": the receiving computer's name (the software that computer uses) (usually Sendmail, qmail or Postfix)
+    "with": protocol (usually SMTP, ESMTP or ESMTPS)
+    "id": id assigned by local computer for logging
+    ";": timestamp (usually given in the computer's localtime; see below for how you can convert these all to your time)
+  }
+*/ 
+function SMTPMessage(helo, remoteAddress, mailfrom, rcpttos, data) {
+    this.helo = helo;
     this.remoteAddress = remoteAddress;
     this.mailfrom = mailfrom;
     this.rcpttos = rcpttos;
@@ -36,6 +62,22 @@ function SMTPServer(hostname, options) {
     this.name = options && options.name || 'node.js smtpevent server';
     this.version = options && options.version || pkg.version || 'unknown';
     this.log = options && options.log || util.log;
+
+    this.tlsOptions = {
+        isServer: true,
+        honorCipherOrder: options && "honorCipherOrder" in options ? options.honorCipherOrder : true,
+        requestOCSP: options && "requestOCSP" in options ? options.requestOCSP : false,
+        key: options.key,
+        cert: options.cert
+    }
+    // to enable TLS at least a cert and a key must be provided in options
+    Object.defineProperty(this, "starttlsEnabled", { get: () => !!this.tlsOptions.key && !!this.tlsOptions.cert });
+    if (this.starttlsEnabled) {
+      this.tlsOptions.sessionIdContext = crypto.createHash('sha1').update(process.argv.join(' ')).digest('hex').slice(0, 32);
+      Object.defineProperty(this, "secureContext", { get: function () {
+        return this._secureContext || (this._secureContext = tls.createSecureContext(this.tlsOptions));
+      } });
+    }
 
     this.stats = { messages: { total: 0 }, connections: { current: 0, max: 0, total: 0 } };
 
@@ -52,9 +94,9 @@ function SMTPServer(hostname, options) {
     this.log_stats = function() { this.log(JSON.stringify(this.stats)); }.bind(this);
 
     // connection calls this method when a complete message is received
-    this.incoming = function (remoteAddress, mailfrom, rcpttos, data) {
+    this.incoming = function (helo, remoteAddress, mailfrom, rcpttos, data) {
         ++this.stats.messages.total;
-        this.emit("incoming", new SMTPMessage(remoteAddress, mailfrom, rcpttos, data));
+        this.emit("incoming", new SMTPMessage(helo, remoteAddress, mailfrom, rcpttos, data));
     }.bind(this);
 
     this.on('connection', (function (socket) {
@@ -82,35 +124,20 @@ function createServer(hostname, options, incomingListener) {
     return server;
 }
 
-var SMTPProtocol = {
-  syntax: {
-    HELO: 'hostname',
-    EHLO: 'hostname',
-    NOOP: null,
-    QUIT: undefined,
-    MAIL: 'FROM:<address>',
-    RCPT: 'TO: <address>',
-    VRFY: '<address>',
-    RSET: null,
-    DATA: null
-  },
-  regex: { 
-    // regex for matching any incoming verb
-    verb:  /^(?:\s*)([A-Za-z]{4,8}) ?(.*)(?:\s|\r|\n)*$/,
-    // regex for matching an incoming email address (as provided in the MAIL FROM: or RCPT TO: commands)
-    email: /^\s*(?:FROM:|TO:)?\s*<\s*?([^>]*)\s*>?\s*$/i,
-  },
-  EOL: '\r\n'
-};
-    
 function SMTPConnection(server, socket) {
-
-    this.id = Math.random() * 1e10 >>> 0;
-
     events.EventEmitter.call(this);
 
+    // This id is used for logging, probably should be written to a header in the message
+    this.id = (Math.random().toString(36) + "00000").substr(2,10);
+
+    // TODO: do a reverse lookup? seems to be standard practice in SMTP header land
+    // dns.reverse(socket.remoteAddress, function (err, hostnames) { ... })
+
+    // TODO: have a "protocol" attribute, default to SMTP, 
+    //       set it to ESMTP on ehlo, and ESTMPS on starttls
+
     this.socket = null; // set below
-    this.greeting = null;
+    this.helo = null;
     this.server = server;
     this.reset(); // initialize envelope and message data
 
@@ -123,6 +150,7 @@ function SMTPConnection(server, socket) {
     
     this.server.register(this);
 
+    // NOTE: the socket on a connection is mutable because of the possibility of TLS upgrades
     this.setSocket = function (s) {
       if (this.sockets === s) return;
       // remove listeners from old socket (if there was one)
@@ -130,9 +158,9 @@ function SMTPConnection(server, socket) {
         this.socket.removeListener('data', this.onVerb);
         this.socket.removeAllListeners('close');
       }
-      // reset the greeting to allow another HELO/EHLO
+      // reset the helo to allow another HELO/EHLO
       // (see https://tools.ietf.org/html/rfc3207#section-4.2)
-      this.greeting = null;
+      this.helo = null;
       this.socket = s;
       // add listeners to new socket (if there is one)
       if (this.socket) {
@@ -151,27 +179,19 @@ function SMTPConnection(server, socket) {
 
 util.inherits(SMTPConnection, events.EventEmitter);
 
-const tlsOptions = require('./tls-options');
-
 SMTPConnection.prototype.starttls = function () {
     if (this.socket instanceof tls.TLSSocket) {
       return this.server.log("starttls: socket is already TLSSocket")
     }
 
-    let socketOptions = {
-        isServer: true,
-        server: this.server,
-    };
-
-    socketOptions = tlsOptions(socketOptions);
-
-    secureContext = tls.createSecureContext(socketOptions);
-
-    socketOptions.SNICallback = function (servername, callback) { callback(null, secureContext); };
+    socketOptions = Object.assign({}, this.server.tlsOptions);
+    socketOptions.SNICallback = function (servername, callback) {
+        callback(null, this.server.secureContext);
+    }.bind(this);
 
     let returned = false;
     let onError = err => {
-        console.log("starttls: onError", err)
+        this.server.log("STARTTLS ERROR", err)
         if (returned) return;
         returned = true;
         // TODO: raise an error on the server?
@@ -221,7 +241,7 @@ SMTPConnection.prototype.reset = function () {
  * @return {String} The cleaned address
  */
 SMTPConnection.prototype.parse_email_address = function (argument) {
-    var m = SMTPProtocol.regex.email.exec(argument)
+    var m = SMTPGrammar.regex.email.exec(argument)
     return m && m[1];
 };
 
@@ -230,16 +250,16 @@ SMTPConnection.prototype.parse_email_address = function (argument) {
  * @param {Number} code
  * @param {String} message
  */
-SMTPConnection.prototype.respond = function (code, message) { this.socket.write("" + code + " " + message + SMTPProtocol.EOL); }
+SMTPConnection.prototype.respond = function (code, message) { this.socket.write("" + code + " " + message + SMTPGrammar.EOL); }
 // sugar for common responses
 SMTPConnection.prototype.respondOk = function () { this.respond(250, "Ok"); }
-SMTPConnection.prototype.respondSyntax = function (verb) { this.respond(501, "Syntax: " + verb + (SMTPProtocol.syntax[verb] ? " " + SMTPProtocol.syntax[verb] : "")); };
+SMTPConnection.prototype.respondSyntax = function (verb) { this.respond(501, "Syntax: " + verb + (SMTPGrammar.syntax[verb] ? " " + SMTPGrammar.syntax[verb] : "")); };
 SMTPConnection.prototype.respondWelcome = function () { this.respond(220, [this.server.hostname, this.server.name, this.server.version].join(' ')); };
 // hello message is a standalone because sometimes we need to write it as an extension, other times as a response
 SMTPConnection.prototype.helloMessage = function () { return this.server.hostname + ' Hello ' + this.socket.remoteAddress; }
 SMTPConnection.prototype.respondHello = function () { this.respond(250, this.helloMessage()); }
 // for ESMTP EHLO response
-SMTPConnection.prototype.writeExtension = function (code, message) { this.socket.write("" + code + "-" + message + SMTPProtocol.EOL); }
+SMTPConnection.prototype.writeExtension = function (code, message) { this.socket.write("" + code + "-" + message + SMTPGrammar.EOL); }
 
 
 /**
@@ -247,20 +267,22 @@ SMTPConnection.prototype.writeExtension = function (code, message) { this.socket
  */
 SMTPConnection.prototype.handlers = {
     HELO: function (argument) {
-        if (this.greeting) return this.respond(503, 'Duplicate HELO/EHLO');
-        this.greeting = argument;
+        if (this.helo) return this.respond(503, 'Duplicate HELO/EHLO');
+        this.helo = argument;
         return this.respondHello()
     },
     EHLO: function (argument) {
-        if (this.greeting) return this.respond(503, 'Duplicate HELO/EHLO');
-        this.greeting = argument;
+        if (this.helo) return this.respond(503, 'Duplicate HELO/EHLO');
+        this.helo = argument;
         if (this.socket instanceof tls.TLSSocket) {
           // if already secure do not send STARTTLS again
           // TODO: should still write any other extensions
           return this.respondHello()
-        } else {
+        } else if (this.server.starttlsEnabled) {
           this.writeExtension(250, this.helloMessage())
           return this.respond(250, "STARTTLS");
+        } else {
+          return this.respondHello();
         }
     },
     MAIL: function (argument) {
@@ -331,8 +353,8 @@ SMTPConnection.prototype.handlers = {
  * Handle the situation where the client is issuing SMTP commands
  */
 SMTPConnection.prototype.onVerb = function (buffer) {
-    this.server.log("connection", this.id, "onVerb", buffer.toString().trim())
-    var matches = buffer.toString().match(SMTPProtocol.regex.verb);
+    this.server.log("connection", this.id, "onVerb", JSON.stringify(buffer.toString().trim()))
+    var matches = buffer.toString().match(SMTPGrammar.regex.verb);
     if (!matches) return this.respond(500, 'Error: bad syntax');
 
     var command = matches[1].toUpperCase(), argument = matches[2];
@@ -341,7 +363,7 @@ SMTPConnection.prototype.onVerb = function (buffer) {
     if (!(command in this.handlers)) return this.respond(502, 'Error: command "' + command + '" not implemented');
 
     // validate presence of argument if expected, or lack thereof if expected, or ignorability thereof...
-    var expected = SMTPProtocol.syntax[command];
+    var expected = SMTPGrammar.syntax[command];
     if (typeof(expected) != "undefined" && !!expected != !!argument) return this.respondSyntax(command);
 
     return this.emit(command, argument);
@@ -354,9 +376,9 @@ SMTPConnection.prototype.onData = function (buffer) {
     this.server.log("connection", this.id, "onData", buffer.toString().trim())
   var lines = buffer.toString().split('\r\n');
   for (var i = 0; i < lines.length; i++) {
-      if (lines[i].match(/^\.$/)) { // we've reached the end of the data
+      if (lines[i].match(SMTPGrammar.regex.end)) { // we've reached the end of the data
         // hand the completed message off to the server
-        this.server.incoming(this.socket.remoteAddress, this.mailfrom, this.rcpttos, this.current_data.join('\n'));
+        this.server.incoming(this.helo, this.socket.remoteAddress, this.mailfrom, this.rcpttos, this.current_data.join('\n'));
         this.reset();
         this.listenForVerbs();
         return this.respondOk();
