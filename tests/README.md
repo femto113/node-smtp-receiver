@@ -6,32 +6,14 @@ which test the system as a whole without concerning the code behind the module.
 
 To run the tests, you will need to have node installed (obviously!) and have a
 version of python as the SMTP client uses the built in one in python's standard
-library. The tests have all been verified with python 2.5.
+library. The tests have all been verified with python 2.7.
 
-The tests require the testing server to be running. In the current directory:
+Note: all tests require the test server to be running
 
-	$ node test-server.js
+	% node test-server.js
 
-Sequential tests
-----------------
+To invoke the tests run any of the following;
 
-These tests probe the functionality of the server in a sequential manner, i.e.
-each test is run one after the other. These tests cover all of the underlying
-javascript code from an external perspective. To run them:
-
-	$ python sequential.py
-
-If you want more information, do:
-
-	$ python sequential.py -v
-
-The second set of tests are the concurrency tests. These verify that multiple
-clients can access the server at the same time. They are quite intensive as 300
-threads are spawned to simulate multiple connections. The output shows each
-thread being created and then finishing up. To run: 
-
-	$ python concurrent.py
-
-For unit tests, see the _"unit tests"_ section.
-
-Kitten photo courtesy of http://www.flickr.com/people/crumley/
+    * grammar.py:    basic SMTP grammar
+    * starttls.py:   ESTMP starttls command
+    * concurrent.py: test multiple concurrent threads

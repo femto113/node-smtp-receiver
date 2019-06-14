@@ -12,7 +12,7 @@ MESSAGE_PATH = path.abspath(path.join(path.dirname(__file__), 'message.txt'))
 KITTENS_PATH = path.abspath(path.join(path.dirname(__file__), 'kittens.jpg'))
 
 # NOTE: for debugging it may be useful to turn on client side debugging messages, e.g.
-#   server = SMTP('localhost', 1025)
+#   server = SMTP('localhost', 2525)
 #   server.set_debuglevel(True)
 
 class MessageTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class MessageTests(unittest.TestCase):
 
         msg['Subject'] = "Can you read this?"
 
-        server = SMTP('localhost', 1025)
+        server = SMTP('localhost', 2525)
         msg_string = msg.as_string()
         print "sending %d character text message" % len(msg_string)
         response = server.sendmail('text@example.com', self.addrs[0], msg_string)
@@ -50,7 +50,7 @@ class MessageTests(unittest.TestCase):
             img = MIMEImage(fp.read()) # Let the MIMEImage class automatically guess the specific image type
             msg.attach(img)
 
-        server = SMTP('localhost', 1025)
+        server = SMTP('localhost', 2525)
         # server.set_debuglevel(True) # turns on client side debug messages
         msg_string = msg.as_string()
         print "sending %d character image message" % len(msg_string)
@@ -72,7 +72,7 @@ class MessageTests(unittest.TestCase):
         with open(KITTENS_PATH, 'rb') as fp: # Open the file in binary mode
             msg.attach(MIMEImage(fp.read())) # Let the MIMEImage class automatically guess the specific image type
 
-        server = SMTP('localhost', 1025)
+        server = SMTP('localhost', 2525)
         # server.set_debuglevel(True) # turns on client side debug messages
         msg_string = msg.as_string()
         print "sending %d character multi-part (text + image) message" % len(msg_string)
