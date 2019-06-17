@@ -1,12 +1,12 @@
+To run the tests, you will need a version of python as the SMTP client uses
+the built in one in python's standard library. The tests have all been verified
+with python 2.7.
+
 Blackbox tests
-==============
+--------------
 
 The tests in this section are _"black box"_ tests or, put another way, tests
 which test the system as a whole without concerning the code behind the module.
-
-To run the tests, you will need to have node installed (obviously!) and have a
-version of python as the SMTP client uses the built in one in python's standard
-library. The tests have all been verified with python 2.7.
 
 Note: all tests require the test server to be running
 
@@ -18,6 +18,17 @@ To invoke the tests run any of the following;
     * starttls.py:   ESTMP starttls command
     * concurrent.py: test multiple concurrent threads
 
+
+Verified Sources
+-------------------
+
+Messages successfully received from 
+
+    * outlook.live.com (@hotmail.com address)
+        EHLO NAM05-CO1-obe.outbound.protection.outlook.comm
+    * mail.google.com (@gmail.com address)
+        EHLO mail-ot1-f42.google.com
+
 Online Test Systems
 -------------------
 
@@ -26,16 +37,20 @@ These can be useful for testing a deployed server.
 Working:
 
 - https://www.checktls.com/TestReceiver
+    EHLO www6.CheckTLS.com
 - https://mxtoolbox.com/diagnostic.aspx
+    EHLO keeper-us-east-1b.mxtoolbox.com
 - https://www.gmass.co/smtp-test
 - https://www.smtper.net/
 - https://pingability.com/smtptest.jsp (Java?)
 - http://www.test-smtp.com/
+    EHLO www.test-smtp.com
 - https://www.dnsqueries.com/en/smtp_test_check.php
 
 Broken:
 
 - https://www.wormly.com/test-smtp-server (PHP?)
+    EHLO tools.wormly.com
 
 failed STARTTLS with 
 
