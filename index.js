@@ -55,7 +55,7 @@ function SMTPMessage(helo, remoteAddress, mailfrom, rcpttos, data) {
     this.data = data;
 }
 
-function SMTPServer(hostname, options) {
+function SMTPServer(hostname, options = {}) {
     net.Server.call(this);
 
     this.hostname = hostname || require('os').hostname();
@@ -68,7 +68,7 @@ function SMTPServer(hostname, options) {
         honorCipherOrder: options && "honorCipherOrder" in options ? options.honorCipherOrder : true,
         requestOCSP: options && "requestOCSP" in options ? options.requestOCSP : false,
         key: options.key,
-        cert: options.cert
+        cert: options.cert 
     }
     // to enable TLS at least a cert and a key must be provided in options
     Object.defineProperty(this, "starttlsEnabled", { get: () => !!this.tlsOptions.key && !!this.tlsOptions.cert });

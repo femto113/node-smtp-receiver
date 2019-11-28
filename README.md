@@ -46,7 +46,7 @@ const smtp = require("smtp-receiver");
 var server = smtp.createServer('smtp.example.com', function (message) {
   console.log(message.remoteAddress, "gave us this message");
   console.log("From: ", message.mailfrom);
-  console.log("To: ", message.recptto.join(', '));
+  console.log("To: ", message.recpttos.join(', '));
   console.log(message.data);
 });
 server.listen(2525, "127.0.0.1");
